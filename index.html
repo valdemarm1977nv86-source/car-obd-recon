@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Авто-сканер</title>
+<meta name="theme-color" content="#070b14">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon.svg">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="conn-dot"></span>
+    <span>Авто-сканер</span>
+  </div>
+  <div class="row">
+    <span class="status-text" id="conn-status-text">Не подключено</span>
+    <button class="btn" id="btn-demo">Демо</button>
+    <button class="btn primary" id="btn-connect">Подключиться</button>
+    <button class="btn danger" id="btn-disconnect" style="display:none">Отключить</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Дашборд -->
+  <section class="screen active" id="screen-dashboard">
+    <div id="dashboard-content">
+      <div class="empty-state glass">
+        <div class="icon">🔌</div>
+        <div class="title">Нет подключения</div>
+        <div class="sub">Нажмите «Подключиться» вверху экрана, чтобы выбрать сканер KW901</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DTC -->
+  <section class="screen" id="screen-dtc">
+    <div class="section-title">Коды ошибок (DTC)</div>
+    <div class="row wrap mb8">
+      <button class="btn primary" id="btn-read-dtc">Считать коды</button>
+      <button class="btn danger" id="btn-clear-dtc" disabled>Сбросить коды</button>
+    </div>
+    <div id="dtc-list">
+      <div class="empty-state glass"><div class="icon">📋</div><div class="title">Нажмите «Считать коды»</div></div>
+    </div>
+  </section>
+
+  <!-- Freeze Frame -->
+  <section class="screen" id="screen-freeze">
+    <div class="section-title">Freeze Frame</div>
+    <div class="hint mb8">Снимок параметров в момент возникновения ошибки.</div>
+    <button class="btn primary mb8" id="btn-read-freeze">Считать Freeze Frame</button>
+    <div id="freeze-content">
+      <div class="empty-state glass"><div class="icon">🧊</div><div class="title">Нажмите «Считать»</div></div>
+    </div>
+  </section>
+
+  <!-- Mode 06 -->
+  <section class="screen" id="screen-mode6">
+    <div class="section-title">Mode 06 — тесты компонентов</div>
+    <div class="hint mb8">Результаты встроенных тестов датчиков и систем.</div>
+    <button class="btn primary mb8" id="btn-read-mode6">Считать Mode 06</button>
+    <div id="mode6-content">
+      <div class="empty-state glass"><div class="icon">🔧</div><div class="title">Нажмите «Считать»</div></div>
+    </div>
+  </section>
+
+  <!-- VIN -->
+  <section class="screen" id="screen-vin">
+    <div class="section-title">VIN автомобиля</div>
+    <button class="btn primary mb8" id="btn-read-vin">Считать VIN</button>
+    <div id="vin-content">
+      <div class="empty-state glass"><div class="icon">🚗</div><div class="title">Нажмите «Считать VIN»</div></div>
+    </div>
+  </section>
+
+  <!-- I/M Readiness -->
+  <section class="screen" id="screen-readiness">
+    <div class="section-title">Готовность систем (I/M Readiness)</div>
+    <button class="btn primary mb8" id="btn-read-readiness">Проверить готовность</button>
+    <div id="readiness-content">
+      <div class="empty-state glass"><div class="icon">📋</div><div class="title">Нажмите «Проверить»</div></div>
+    </div>
+  </section>
+
+  <!-- Kia заводские параметры -->
+  <section class="screen" id="screen-kia">
+    <div class="section-title">Заводские параметры Kia Sorento</div>
+    <div class="hint mb8">Расширенные параметры вне стандарта OBD-II, специфичные для этой модели.</div>
+    <button class="btn primary mb8" id="btn-read-kia">Считать заводские параметры</button>
+    <div id="kia-content">
+      <div class="empty-state glass"><div class="icon">🏭</div><div class="title">Нажмите «Считать»</div></div>
+    </div>
+  </section>
+
+  <!-- История -->
+  <section class="screen" id="screen-history">
+    <div class="row between mb8">
+      <div class="section-title" style="margin:0">История сканирований</div>
+      <button class="btn small danger" id="btn-clear-history">Очистить</button>
+    </div>
+    <div id="history-list"></div>
+  </section>
+
+</main>
+
+<nav class="navbar">
+  <button class="nav-btn active" data-screen="dashboard"><span class="ic">📊</span>Дашборд</button>
+  <button class="nav-btn" data-screen="dtc"><span class="ic">⚠️</span>DTC</button>
+  <button class="nav-btn" data-screen="freeze"><span class="ic">🧊</span>Freeze</button>
+  <button class="nav-btn" data-screen="mode6"><span class="ic">🔧</span>Mode 06</button>
+  <button class="nav-btn" data-screen="vin"><span class="ic">🚗</span>VIN</button>
+  <button class="nav-btn" data-screen="readiness"><span class="ic">📋</span>Готовность</button>
+  <button class="nav-btn" data-screen="kia"><span class="ic">🏭</span>Kia</button>
+  <button class="nav-btn" data-screen="history"><span class="ic">🗂</span>История</button>
+</nav>
+
+<div id="toast-host"></div>
+
+<div class="modal-overlay" id="modal-overlay" hidden>
+  <div class="glass modal-box">
+    <h3 id="modal-title">Подтвердите действие</h3>
+    <p id="modal-text"></p>
+    <div class="modal-actions">
+      <button class="btn" id="modal-no">Отмена</button>
+      <button class="btn danger" id="modal-yes">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+<script>
+  // Демо-режим — только для просмотра интерфейса, без реального сканера.
+  // Обычный (не module) скрипт: работает даже при открытии файла напрямую (file://),
+  // где браузер блокирует загрузку ES-модулей из соображений безопасности.
+  (function () {
+    function arcPath(fromDeg, toDeg, r, cx, cy) {
+      function polar(a) { const rad = (a - 90) * Math.PI / 180; return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)]; }
+      const [x1, y1] = polar(fromDeg), [x2, y2] = polar(toDeg);
+      const large = (toDeg - fromDeg) > 180 ? 1 : 0;
+      return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+    }
+    const START = -225, SWEEP = 270, R = 48, CX = 60, CY = 65;
+    const COLOR = { ok: "#4ade80", warn: "#fb923c", crit: "#ef4444", info: "#60a5fa", neutral: "#22d3ee" };
+    const LABEL = { ok: "Норма", warn: "Внимание", crit: "Критично", info: "Инфо" };
+
+    function gaugeCard(label, unit, value, min, max, verdict) {
+      const pct = (value - min) / (max - min);
+      const endAngle = START + SWEEP * pct;
+      const track = arcPath(START, START + SWEEP, R, CX, CY);
+      const fill = arcPath(START, endAngle, R, CX, CY);
+      const color = verdict ? COLOR[verdict] : COLOR.neutral;
+      const badge = verdict && LABEL[verdict] ? `<span class="gauge-badge badge-${verdict}">${LABEL[verdict]}</span>` : "";
+      return `<div class="glass gauge-card">
+        <svg viewBox="0 0 120 130">
+          <path d="${track}" fill="none" stroke="#1e293b" stroke-width="9" stroke-linecap="round"/>
+          <path d="${fill}" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round"/>
+          <text x="60" y="70" text-anchor="middle" font-size="18" font-weight="bold" fill="white" font-family="monospace">${value}</text>
+          <text x="60" y="85" text-anchor="middle" font-size="9" fill="#64748b">${unit}</text>
+        </svg>
+        <div class="gauge-label">${label}</div>${badge}
+      </div>`;
+    }
+    function metricCard(label, unit, value, verdict, note) {
+      const badge = verdict && LABEL[verdict] ? `<span class="gauge-badge badge-${verdict}" title="${note || ""}">${LABEL[verdict]}</span>` : "";
+      return `<div class="glass metric-card">
+        <div class="m-label">${label}</div>
+        <div class="m-value">${value} <span class="unit">${unit}</span></div>${badge}
+      </div>`;
+    }
+
+    function showDemo() {
+      document.getElementById("conn-status-text").textContent = "ДЕМО-ДАННЫЕ (не реальный сканер)";
+      document.getElementById("conn-dot").className = "dot connected";
+      document.getElementById("dashboard-content").innerHTML = `
+        <div class="section-title">Основные параметры</div>
+        <div class="gauge-grid">
+          ${gaugeCard("Обороты двигателя", "об/мин", 2450, 0, 8000, null)}
+          ${gaugeCard("Скорость", "км/ч", 62, 0, 220, null)}
+          ${gaugeCard("Температура ОЖ", "°C", 91, -40, 150, "ok")}
+          ${gaugeCard("Нагрузка двигателя", "%", 34, 0, 100, null)}
+          ${gaugeCard("Положение дросселя", "%", 18, 0, 100, null)}
+          ${gaugeCard("Уровень топлива", "%", 54, 0, 100, "ok")}
+          ${gaugeCard("Температура впуска", "°C", 28, -40, 120, "ok")}
+        </div>
+        <div class="section-title">Остальные параметры</div>
+        <div class="metric-grid">
+          ${metricCard("Коррекция топлива (кратк.)", "%", 3.2, "ok")}
+          ${metricCard("Коррекция топлива (длит.)", "%", -14.5, "warn", "Смесь обогащается — проверьте давление топлива/форсунки")}
+          ${metricCard("Угол опережения зажигания", "°", 12, null)}
+          ${metricCard("Давление во впускном коллекторе", "кПа", 38, null)}
+          ${metricCard("Давление топлива", "кПа", 320, null)}
+          ${metricCard("Время работы двигателя", "сек", 842, null)}
+          ${metricCard("Температура воздуха (внешн.)", "°C", 22, null)}
+          ${metricCard("Барометрическое давление", "кПа", 99, null)}
+        </div>
+        <div class="row mt16" style="justify-content:center">
+          <button class="btn primary" disabled>Сохранить отчёт (в демо недоступно)</button>
+        </div>`;
+
+      document.getElementById("dtc-list").innerHTML = `
+        <div class="glass dtc-item"><div class="dtc-code">P0171</div><div class="dtc-desc">Слишком бедная смесь (банк 1)</div></div>
+        <div class="glass dtc-item"><div class="dtc-code">P0301</div><div class="dtc-desc">Пропуски воспламенения — цилиндр 1</div></div>`;
+    }
+
+    document.getElementById("btn-demo").addEventListener("click", showDemo);
+  })();
+
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
