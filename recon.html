@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>KW901 BLE Recon</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #131a22;
+    --border: #223040;
+    --text: #dbe6f0;
+    --dim: #7c8fa3;
+    --accent: #35c2ff;
+    --ok: #3ddc84;
+    --err: #ff5c6c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Roboto, "Segoe UI", sans-serif;
+    font-size: 15px;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 16px; }
+  button {
+    background: var(--accent);
+    color: #001622;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-weight: 400;
+  }
+  .status {
+    margin: 12px 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .status.ok { border-color: var(--ok); color: var(--ok); }
+  .status.err { border-color: var(--err); color: var(--err); }
+  section {
+    margin-top: 20px;
+    padding: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  section h2 { font-size: 14px; margin: 0 0 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  .char-row {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-family: monospace;
+    font-size: 12px;
+  }
+  .char-row:last-child { border-bottom: none; }
+  .char-props { color: var(--accent); }
+  select, input[type=text] {
+    width: 100%;
+    padding: 10px;
+    background: #0b0f14;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  label { font-size: 12px; color: var(--dim); display: block; margin-bottom: 4px; }
+  .row { display: flex; gap: 8px; }
+  .row button { flex: 1; }
+  textarea#log {
+    width: 100%;
+    height: 260px;
+    background: #05080b;
+    color: #9ad4ff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 10px;
+    resize: vertical;
+  }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; color: var(--dim); }
+</style>
+</head>
+<body>
+
+<h1>KW901 BLE Recon</h1>
+<div class="sub">Разведка BLE GATT-протокола сканера. Временный инструмент, не финальный интерфейс.</div>
+
+<button id="btnConnect">Подключиться к сканеру</button>
+<button id="btnDisconnect" class="secondary" disabled>Отключиться</button>
+<div id="status" class="status">Не подключено.</div>
+
+<section id="servicesSection" style="display:none">
+  <h2>Найденные сервисы и характеристики</h2>
+  <div id="servicesList"></div>
+</section>
+
+<section id="sendSection" style="display:none">
+  <h2>Отправить команду</h2>
+  <label for="charSelect">Характеристика для записи (write)</label>
+  <select id="charSelect"></select>
+  <label for="cmdInput">Команда (например ATZ, ATE0, 0100)</label>
+  <input type="text" id="cmdInput" value="ATZ" autocapitalize="characters" autocomplete="off">
+  <div class="checkbox-row">
+    <input type="checkbox" id="appendCr" checked>
+    <label for="appendCr" style="margin:0">Добавлять \r в конец (стандарт ELM327)</label>
+  </div>
+  <div class="row">
+    <button id="btnSend">Отправить</button>
+  </div>
+</section>
+
+<section>
+  <h2>Лог</h2>
+  <textarea id="log" readonly></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="btnCopyLog" class="secondary">Скопировать лог</button>
+    <button id="btnClearLog" class="secondary">Очистить</button>
+  </div>
+</section>
+
+<script>
+// Кандидаты UUID: Chrome отдаёт только те сервисы, что перечислены в optionalServices при
+// запросе устройства (приватность), поэтому протокол KW901 не задокументирован — угадываем
+// по распространённым паттернам "прозрачный UART" у дешёвых BLE ELM327-клонов.
+const CANDIDATE_SERVICES = [
+  '0000fff0-0000-1000-8000-00805f9b34fb', // частый паттерн ELM327 BLE клонов
+  '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10/HC-08 style UART
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART Service (NUS)
+  '0000ffb0-0000-1000-8000-00805f9b34fb',
+  '0000ff00-0000-1000-8000-00805f9b34fb',
+  '0000fee7-0000-1000-8000-00805f9b34fb',
+  '000018f0-0000-1000-8000-00805f9b34fb',
+  'device_information',
+  'battery_service',
+  'generic_access',
+];
+
+let device = null;
+let gattServer = null;
+let writableChars = []; // {uuid, serviceUuid, char}
+let notifyChars = [];
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status');
+const logEl = $('log');
+
+function log(line, tag) {
+  const time = new Date().toLocaleTimeString('ru-RU', { hour12: false });
+  const prefix = tag ? `[${tag}] ` : '';
+  logEl.value += `${time} ${prefix}${line}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+}
+
+function bytesToAscii(bytes) {
+  return Array.from(bytes).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+}
+
+function propsToString(props) {
+  const list = [];
+  if (props.read) list.push('read');
+  if (props.write) list.push('write');
+  if (props.writeWithoutResponse) list.push('writeNoResp');
+  if (props.notify) list.push('notify');
+  if (props.indicate) list.push('indicate');
+  return list.join(', ') || '(нет свойств)';
+}
+
+async function connect() {
+  if (!navigator.bluetooth) {
+    setStatus('Web Bluetooth недоступен в этом браузере. Нужен Chrome на Android.', 'err');
+    return;
+  }
+  try {
+    log('Открываю диалог выбора устройства...');
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: CANDIDATE_SERVICES,
+    });
+    log(`Выбрано устройство: ${device.name || '(без имени)'} / id ${device.id}`);
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    setStatus('Подключаюсь...', null);
+    gattServer = await device.gatt.connect();
+    setStatus(`Подключено: ${device.name || device.id}`, 'ok');
+    $('btnDisconnect').disabled = false;
+    $('btnConnect').disabled = true;
+
+    await discoverServices();
+  } catch (e) {
+    log(`Ошибка подключения: ${e.message}`, 'ERR');
+    setStatus(`Ошибка: ${e.message}`, 'err');
+  }
+}
+
+async function discoverServices() {
+  writableChars = [];
+  notifyChars = [];
+  const listEl = $('servicesList');
+  listEl.innerHTML = '';
+
+  let services;
+  try {
+    services = await gattServer.getPrimaryServices();
+  } catch (e) {
+    log(`Не удалось получить список сервисов: ${e.message}`, 'ERR');
+    return;
+  }
+
+  if (services.length === 0) {
+    log('Сервисов не найдено среди угаданных UUID. Протокол сканера не подходит под известные паттерны — нужно расширять список CANDIDATE_SERVICES.', 'ERR');
+    setStatus('Подключено, но ни один известный сервис не отозвался.', 'err');
+    return;
+  }
+
+  for (const service of services) {
+    const svcDiv = document.createElement('div');
+    svcDiv.className = 'char-row';
+    svcDiv.innerHTML = `<b>Сервис:</b> ${service.uuid}`;
+    listEl.appendChild(svcDiv);
+    log(`Сервис: ${service.uuid}`);
+
+    let chars;
+    try {
+      chars = await service.getCharacteristics();
+    } catch (e) {
+      log(`  не удалось получить характеристики: ${e.message}`, 'ERR');
+      continue;
+    }
+
+    for (const ch of chars) {
+      const props = propsToString(ch.properties);
+      const row = document.createElement('div');
+      row.className = 'char-row';
+      row.innerHTML = `&nbsp;&nbsp;↳ ${ch.uuid}<br><span class="char-props">${props}</span>`;
+      listEl.appendChild(row);
+      log(`  характеристика ${ch.uuid} — ${props}`);
+
+      if (ch.properties.write || ch.properties.writeWithoutResponse) {
+        writableChars.push({ uuid: ch.uuid, serviceUuid: service.uuid, char: ch });
+      }
+      if (ch.properties.notify || ch.properties.indicate) {
+        notifyChars.push({ uuid: ch.uuid, serviceUuid: service.uuid, char: ch });
+        try {
+          await ch.startNotifications();
+          ch.addEventListener('characteristicvaluechanged', (ev) => {
+            const bytes = new Uint8Array(ev.target.value.buffer);
+            log(`RX ${ch.uuid}: hex[${bytesToHex(bytes)}] ascii[${bytesToAscii(bytes)}]`, 'NOTIFY');
+          });
+          log(`  подписался на notify для ${ch.uuid}`);
+        } catch (e) {
+          log(`  не удалось подписаться на ${ch.uuid}: ${e.message}`, 'ERR');
+        }
+      }
+    }
+  }
+
+  $('servicesSection').style.display = services.length ? 'block' : 'none';
+
+  const select = $('charSelect');
+  select.innerHTML = '';
+  writableChars.forEach((wc, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = `${wc.uuid} (сервис ${wc.serviceUuid})`;
+    select.appendChild(opt);
+  });
+
+  if (writableChars.length > 0) {
+    $('sendSection').style.display = 'block';
+  } else {
+    log('Ни одной write-характеристики не найдено — отправить команду будет некуда.', 'ERR');
+  }
+}
+
+async function sendCommand() {
+  const idx = Number($('charSelect').value);
+  const wc = writableChars[idx];
+  if (!wc) {
+    log('Нет выбранной характеристики для записи.', 'ERR');
+    return;
+  }
+  let text = $('cmdInput').value;
+  if ($('appendCr').checked) text += '\r';
+
+  const bytes = new TextEncoder().encode(text);
+  log(`TX ${wc.uuid}: hex[${bytesToHex(bytes)}] ascii[${bytesToAscii(bytes)}]`, 'SEND');
+
+  try {
+    if (wc.char.properties.write) {
+      await wc.char.writeValueWithResponse(bytes);
+    } else {
+      await wc.char.writeValueWithoutResponse(bytes);
+    }
+    log('Отправлено.');
+  } catch (e) {
+    log(`Ошибка отправки: ${e.message}`, 'ERR');
+  }
+}
+
+function onDisconnected() {
+  setStatus('Отключено.', null);
+  $('btnConnect').disabled = false;
+  $('btnDisconnect').disabled = true;
+  $('servicesSection').style.display = 'none';
+  $('sendSection').style.display = 'none';
+  log('Устройство отключилось.');
+}
+
+function disconnect() {
+  if (device && device.gatt.connected) {
+    device.gatt.disconnect();
+  }
+}
+
+$('btnConnect').addEventListener('click', connect);
+$('btnDisconnect').addEventListener('click', disconnect);
+$('btnSend').addEventListener('click', sendCommand);
+$('btnCopyLog').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(logEl.value);
+    setStatus('Лог скопирован в буфер обмена.', 'ok');
+  } catch (e) {
+    logEl.select();
+    document.execCommand('copy');
+  }
+});
+$('btnClearLog').addEventListener('click', () => { logEl.value = ''; });
+</script>
+</body>
+</html>
