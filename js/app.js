@@ -20,6 +20,8 @@ const state = {
   pollActive: false,
   pollGen: 0,
   pollPaused: false,
+  adapterInfo: null,
+  supportedPids: new Set(),
 };
 
 // ── Тосты ─────────────────────────────────────────────────────────────────
@@ -91,6 +93,16 @@ $("btn-connect").addEventListener("click", async () => {
     toast(`Подключено: ${name}`, "ok");
     buildDashboard();
     startPolling();
+
+    obd.getAdapterInfo().then((info) => {
+      state.adapterInfo = info;
+      const el = $("adapter-info");
+      if (el) el.textContent = [info.version, info.voltage].filter(Boolean).join(" · ");
+    }).catch(() => {});
+    obd.detectSupportedPids().then((set) => {
+      state.supportedPids = set;
+      if (set.size) toast(`Определено поддерживаемых параметров: ${set.size}`, "ok");
+    }).catch(() => {});
   } catch (e) {
     setConnUi("idle");
     toast(e.message || "Не удалось подключиться", "err");
@@ -227,6 +239,7 @@ function buildDashboard() {
   const cardHtml = CARD_PIDS.map(name => metricCardHtml(name, byName(name))).join("");
 
   $("dashboard-content").innerHTML = `
+    <div class="hint mb8" id="adapter-info">Определяю адаптер…</div>
     <div class="section-title">Основные параметры</div>
     <div class="gauge-grid">${gaugeHtml}</div>
     <div class="section-title">Остальные параметры</div>
@@ -267,6 +280,10 @@ async function pollOnce() {
 
 async function pollOne(name) {
   const def = byName(name);
+  if (state.supportedPids.size && !state.supportedPids.has(def.pid)) {
+    state.live[name] = { value: null, label: def.label, unit: def.unit, verdict: null };
+    return; // машина сама сказала, что этого параметра у неё нет — не тратим время на запрос
+  }
   try {
     const bytes = await obd.requestPid("01", def.pid);
     const value = bytes ? decodePidResponse(def, bytes) : null;
@@ -299,33 +316,48 @@ async function startPolling() {
   state.pollActive = false;
 }
 
-// ── DTC ───────────────────────────────────────────────────────────────────
+// ── DTC (подтверждённые Mode 03 / ожидающие Mode 07 / постоянные Mode 0A) ──
+const DTC_MODES = {
+  confirmed: { cmd: "03", echo: "43", label: "Подтверждённые", clearable: true },
+  pending: { cmd: "07", echo: "47", label: "Ожидающие", clearable: false },
+  permanent: { cmd: "0A", echo: "4A", label: "Постоянные", clearable: false },
+};
+let dtcMode = "confirmed";
+
 function renderDtcList(codes) {
   const host = $("dtc-list");
+  const modeInfo = DTC_MODES[dtcMode];
+  const canClear = modeInfo.clearable && codes.length > 0;
+  $("btn-clear-dtc").disabled = !canClear;
+  $("btn-clear-dtc").style.display = modeInfo.clearable ? "" : "none";
+
   if (!codes.length) {
-    host.innerHTML = `<div class="empty-state glass"><div class="icon">✅</div><div class="title">Ошибок не обнаружено</div></div>`;
-    $("btn-clear-dtc").disabled = true;
+    host.innerHTML = `<div class="empty-state glass"><div class="icon">✅</div><div class="title">Ошибок нет (${modeInfo.label.toLowerCase()})</div></div>`;
     return;
   }
-  host.innerHTML = codes.map(c => `
-    <div class="glass dtc-item">
-      <div class="dtc-code">${c.code}</div>
-      <div class="dtc-desc">${c.desc}</div>
-    </div>
-  `).join("");
-  $("btn-clear-dtc").disabled = false;
+  host.innerHTML = `
+    ${dtcMode === "permanent" ? `<div class="hint mb8">Постоянные коды нельзя сбросить кнопкой — они пропадают сами после того, как связанная проверка пройдёт успешно несколько циклов поездки.</div>` : ""}
+    ${codes.map(c => `
+      <div class="glass dtc-item">
+        <div class="dtc-code">${c.code}</div>
+        <div class="dtc-desc">${c.desc}</div>
+      </div>
+    `).join("")}`;
 }
 
-$("btn-read-dtc").addEventListener("click", async () => {
+async function loadDtc(mode) {
   if (!state.connected) { toast("Сначала подключитесь к сканеру", "err"); return; }
-  $("btn-read-dtc").disabled = true;
+  dtcMode = mode;
+  document.querySelectorAll(".dtc-mode-btn").forEach(b => b.classList.toggle("primary", b.dataset.dtcMode === mode));
+  const modeInfo = DTC_MODES[mode];
+  $("dtc-list").innerHTML = `<div class="hint">Считываю…</div>`;
   try {
-    const resp = await obd.sendCommand("03");
+    const resp = await obd.sendCommand(modeInfo.cmd);
     const hex = resp.replace(/\s+/g, "").toUpperCase();
     let codes = [];
     if (!/NO ?DATA|UNABLE|STOPPED|ERROR|\?/i.test(hex)) {
-      const bodyIdx = hex.indexOf("43");
-      const body = bodyIdx >= 0 ? hex.slice(bodyIdx + 2) : hex;
+      const bodyIdx = hex.indexOf(modeInfo.echo);
+      const body = bodyIdx >= 0 ? hex.slice(bodyIdx + modeInfo.echo.length) : hex;
       const bytes = [];
       for (let i = 0; i + 1 < body.length; i += 2) {
         const b = parseInt(body.slice(i, i + 2), 16);
@@ -334,14 +366,16 @@ $("btn-read-dtc").addEventListener("click", async () => {
       }
       codes = parseDtcBytes(bytes).map(code => ({ code, desc: describeDtc(code) }));
     }
-    state.lastDtc = codes;
+    if (mode === "confirmed") state.lastDtc = codes;
     renderDtcList(codes);
-    toast(`Считано кодов: ${codes.length}`, codes.length ? "" : "ok");
+    toast(`${modeInfo.label}: ${codes.length}`, codes.length ? "" : "ok");
   } catch (e) {
-    toast(e.message || "Ошибка чтения DTC", "err");
-  } finally {
-    $("btn-read-dtc").disabled = false;
+    $("dtc-list").innerHTML = `<div class="hint" style="color:#fca5a5">${e.message || "Ошибка чтения"}</div>`;
   }
+}
+
+document.querySelectorAll(".dtc-mode-btn").forEach(b => {
+  b.addEventListener("click", () => loadDtc(b.dataset.dtcMode));
 });
 
 $("btn-clear-dtc").addEventListener("click", async () => {
@@ -350,7 +384,7 @@ $("btn-clear-dtc").addEventListener("click", async () => {
   try {
     await obd.sendCommand("04");
     state.lastDtc = [];
-    renderDtcList([]);
+    if (dtcMode === "confirmed") renderDtcList([]);
     toast("Коды ошибок сброшены", "ok");
   } catch (e) {
     toast(e.message || "Не удалось сбросить коды", "err");
@@ -492,13 +526,13 @@ $("btn-read-vin").addEventListener("click", async () => {
 });
 
 // ── I/M Readiness ────────────────────────────────────────────────────────
-$("btn-read-readiness").addEventListener("click", async () => {
+async function readReadiness(pid, btnId, title) {
   if (!state.connected) { toast("Сначала подключитесь к сканеру", "err"); return; }
-  $("btn-read-readiness").disabled = true;
+  $(btnId).disabled = true;
   const host = $("readiness-content");
   host.innerHTML = `<div class="hint">Считываю…</div>`;
   try {
-    const bytes = await obd.requestPid("01", "01");
+    const bytes = await obd.requestPid("01", pid);
     const status = bytes ? decodeReadiness(bytes) : null;
     state.lastReadiness = status;
     if (!status) {
@@ -508,12 +542,11 @@ $("btn-read-readiness").addEventListener("click", async () => {
     host.innerHTML = `
       <div class="glass panel row between">
         <div>
-          <div class="section-title" style="margin-top:0">Индикатор Check Engine (MIL)</div>
-          <div style="font-size:16px;font-weight:700;color:${status.mil ? "var(--crit)" : "var(--ok)"}">${status.mil ? "ГОРИТ" : "Выключен"}</div>
+          <div class="section-title" style="margin-top:0">${title}</div>
+          <div style="font-size:16px;font-weight:700;color:${status.mil ? "var(--crit)" : "var(--ok)"}">MIL: ${status.mil ? "ГОРИТ" : "Выключен"}</div>
         </div>
         <div class="hint">Кодов ошибок: ${status.dtcCount}</div>
       </div>
-      <div class="hint mb8">⚠ Расположение бит соответствует стандарту SAE J1979, но не проверено на всех автомобилях.</div>
       ${status.monitors.map(m => `
         <div class="glass dtc-item">
           <span class="gauge-badge ${m.complete ? "badge-ok" : "badge-warn"}" style="margin-top:2px">${m.complete ? "Готов" : "Не завершён"}</span>
@@ -524,9 +557,11 @@ $("btn-read-readiness").addEventListener("click", async () => {
   } catch (e) {
     host.innerHTML = `<div class="hint" style="color:#fca5a5">${e.message || "Ошибка чтения"}</div>`;
   } finally {
-    $("btn-read-readiness").disabled = false;
+    $(btnId).disabled = false;
   }
-});
+}
+$("btn-read-readiness").addEventListener("click", () => readReadiness("01", "btn-read-readiness", "С момента сброса кодов"));
+$("btn-read-readiness-cycle").addEventListener("click", () => readReadiness("41", "btn-read-readiness-cycle", "Текущий цикл движения"));
 
 // ── Заводские параметры Kia Sorento (экспериментально, не Mode 01) ───────
 $("btn-read-kia").addEventListener("click", async () => {

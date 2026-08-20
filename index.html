@@ -42,11 +42,13 @@
   <section class="screen" id="screen-dtc">
     <div class="section-title">Коды ошибок (DTC)</div>
     <div class="row wrap mb8">
-      <button class="btn primary" id="btn-read-dtc">Считать коды</button>
-      <button class="btn danger" id="btn-clear-dtc" disabled>Сбросить коды</button>
+      <button class="btn dtc-mode-btn primary" data-dtc-mode="confirmed">Подтверждённые</button>
+      <button class="btn dtc-mode-btn" data-dtc-mode="pending">Ожидающие</button>
+      <button class="btn dtc-mode-btn" data-dtc-mode="permanent">Постоянные</button>
     </div>
+    <button class="btn danger mb8" id="btn-clear-dtc" disabled>Сбросить коды</button>
     <div id="dtc-list">
-      <div class="empty-state glass"><div class="icon">📋</div><div class="title">Нажмите «Считать коды»</div></div>
+      <div class="empty-state glass"><div class="icon">📋</div><div class="title">Нажмите «Подтверждённые», чтобы начать</div></div>
     </div>
   </section>
 
@@ -82,7 +84,10 @@
   <!-- I/M Readiness -->
   <section class="screen" id="screen-readiness">
     <div class="section-title">Готовность систем (I/M Readiness)</div>
-    <button class="btn primary mb8" id="btn-read-readiness">Проверить готовность</button>
+    <div class="row wrap mb8">
+      <button class="btn primary" id="btn-read-readiness">С момента сброса кодов</button>
+      <button class="btn" id="btn-read-readiness-cycle">Текущий цикл</button>
+    </div>
     <div id="readiness-content">
       <div class="empty-state glass"><div class="icon">📋</div><div class="title">Нажмите «Проверить»</div></div>
     </div>

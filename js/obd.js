@@ -127,6 +127,47 @@ export class ObdLink {
   async restoreAutoHeader() {
     await this.sendCommand("ATSP0");
   }
+
+  // Версия чипа (ATI) и его собственное напряжение питания (ATRV) — не от машины, от адаптера.
+  async getAdapterInfo() {
+    let version = "", voltage = "";
+    try { version = await this.sendCommand("ATI"); } catch { /* не критично */ }
+    try { voltage = await this.sendCommand("ATRV"); } catch { /* не критично */ }
+    return { version: version.trim(), voltage: voltage.trim() };
+  }
+
+  // Опрашивает у машины битовые маски поддерживаемых PID (Mode 01, PID 00/20/40/...),
+  // чтобы не тратить время на запрос параметров, которых у этой машины физически нет.
+  // Возвращает Set строк "0C", "0D" и т.д. Пустой Set = определить не удалось (запрашивать всё).
+  async detectSupportedPids() {
+    const supported = new Set();
+    let start = 0x00;
+    for (let guard = 0; guard < 8; guard++) {
+      const pidHex = start.toString(16).padStart(2, "0").toUpperCase();
+      let bytes;
+      try {
+        bytes = await this.requestPid("01", pidHex);
+      } catch {
+        break;
+      }
+      if (!bytes || bytes.length < 4) break;
+      let bitIndex = 0;
+      let hasNext = false;
+      for (const byte of bytes.slice(0, 4)) {
+        for (let b = 7; b >= 0; b--) {
+          const pidNum = start + bitIndex + 1;
+          if (byte & (1 << b)) {
+            supported.add(pidNum.toString(16).padStart(2, "0").toUpperCase());
+            if (pidNum === start + 0x20) hasNext = true;
+          }
+          bitIndex++;
+        }
+      }
+      if (!hasNext) break;
+      start += 0x20;
+    }
+    return supported;
+  }
 }
 
 function cleanResponse(raw, cmd) {

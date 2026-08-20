@@ -102,6 +102,95 @@ export const PID_LIST = [
     min: 0, max: 255, decode: (A) => A,
     verdict: () => null,
   },
+  // ── Добавлено 2026-08-20 по скриншотам живого сканирования (подтверждено реально
+  // поддерживается этой машиной) ──────────────────────────────────────────────
+  {
+    name: "O2_B1S1_V", pid: "14", bytes: 2, label: "Датчик кислорода 1 Блок 1 — напряжение", unit: "В",
+    min: 0, max: 1.275, decode: (A) => A / 200,
+    verdict: () => null,
+  },
+  {
+    name: "O2_B1S1_TRIM", pid: "14", bytes: 2, label: "Датчик кислорода 1 Блок 1 — коррекция", unit: "%",
+    min: -100, max: 100, decode: (A, B) => (B === 0xff ? null : (B - 128) * 100 / 128),
+    verdict: (v) => v == null ? null : (Math.abs(v) <= 10 ? "ok" : Math.abs(v) <= 25 ? "warn" : "crit"),
+  },
+  {
+    name: "O2_B1S2_V", pid: "15", bytes: 2, label: "Датчик кислорода 2 Блок 1 — напряжение", unit: "В",
+    min: 0, max: 1.275, decode: (A) => A / 200,
+    verdict: () => null,
+  },
+  {
+    name: "O2_B1S2_TRIM", pid: "15", bytes: 2, label: "Датчик кислорода 2 Блок 1 — коррекция", unit: "%",
+    min: -100, max: 100, decode: (A, B) => (B === 0xff ? null : (B - 128) * 100 / 128),
+    verdict: (v) => v == null ? null : (Math.abs(v) <= 10 ? "ok" : Math.abs(v) <= 25 ? "warn" : "crit"),
+  },
+  {
+    name: "DIST_MIL_ON", pid: "21", bytes: 2, label: "Дистанция с горящим Check Engine", unit: "км",
+    min: 0, max: 65535, decode: (A, B) => (A * 256) + B,
+    verdict: (v) => v > 0 ? "warn" : "ok",
+    note: (v) => v > 0 ? "Машина едет с активной ошибкой — стоит разобраться, что вызвало" : null,
+  },
+  {
+    name: "EVAP_PURGE", pid: "2E", bytes: 1, label: "Командная продувка адсорбера (EVAP)", unit: "%",
+    min: 0, max: 100, decode: (A) => A * 100 / 255,
+    verdict: () => null,
+  },
+  {
+    name: "WARMUPS_SINCE_CLEAR", pid: "30", bytes: 1, label: "Прогревов с момента сброса кодов", unit: "",
+    min: 0, max: 255, decode: (A) => A,
+    verdict: () => null,
+  },
+  {
+    name: "DIST_SINCE_CLEAR", pid: "31", bytes: 2, label: "Дистанция с момента сброса кодов", unit: "км",
+    min: 0, max: 65535, decode: (A, B) => (A * 256) + B,
+    verdict: () => null,
+  },
+  {
+    name: "CATALYST_TEMP_B1S1", pid: "3C", bytes: 2, label: "Температура катализатора, датчик 1", unit: "°C",
+    min: -40, max: 6513.5, decode: (A, B) => ((A * 256) + B) / 10 - 40,
+    verdict: () => null,
+  },
+  {
+    name: "CATALYST_TEMP_B1S2", pid: "3E", bytes: 2, label: "Температура катализатора, датчик 2", unit: "°C",
+    min: -40, max: 6513.5, decode: (A, B) => ((A * 256) + B) / 10 - 40,
+    verdict: () => null,
+  },
+  {
+    name: "CTRL_MODULE_VOLTAGE", pid: "42", bytes: 2, label: "Напряжение на ЭБУ", unit: "В",
+    min: 0, max: 65.535, decode: (A, B) => ((A * 256) + B) / 1000,
+    verdict: (v) => (v < 11.5 || v > 15) ? "warn" : "ok",
+    note: (v) => v < 11.5 ? "Низкое напряжение — проверьте АКБ/генератор" : v > 15 ? "Высокое напряжение — возможен перезаряд" : null,
+  },
+  {
+    name: "ABS_LOAD", pid: "43", bytes: 2, label: "Абсолютное значение нагрузки двигателя", unit: "%",
+    min: 0, max: 25700, decode: (A, B) => ((A * 256) + B) * 100 / 255,
+    verdict: () => null,
+  },
+  {
+    name: "ACCEL_PEDAL_D", pid: "49", bytes: 1, label: "Положение педали акселератора D", unit: "%",
+    min: 0, max: 100, decode: (A) => A * 100 / 255,
+    verdict: () => null,
+  },
+  {
+    name: "ACCEL_PEDAL_E", pid: "4A", bytes: 1, label: "Положение педали акселератора E", unit: "%",
+    min: 0, max: 100, decode: (A) => A * 100 / 255,
+    verdict: () => null,
+  },
+  {
+    name: "COMMANDED_THROTTLE", pid: "4C", bytes: 1, label: "Заданное положение дросселя (PXX)", unit: "%",
+    min: 0, max: 100, decode: (A) => A * 100 / 255,
+    verdict: () => null,
+  },
+  {
+    name: "TIME_MIL_ON", pid: "4D", bytes: 2, label: "Время с горящим Check Engine", unit: "мин",
+    min: 0, max: 65535, decode: (A, B) => (A * 256) + B,
+    verdict: (v) => v > 0 ? "warn" : "ok",
+  },
+  {
+    name: "TIME_SINCE_CLEAR", pid: "4E", bytes: 2, label: "Время с момента сброса кодов", unit: "мин",
+    min: 0, max: 65535, decode: (A, B) => (A * 256) + B,
+    verdict: () => null,
+  },
 ];
 
 // Крупные датчики-дуги на дашборде — первые 4, остальные из списка идут карточками/доп. датчиками.
