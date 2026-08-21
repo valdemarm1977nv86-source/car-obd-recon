@@ -93,10 +93,18 @@
     </div>
   </section>
 
-  <!-- Kia заводские параметры -->
+  <!-- Заводские параметры -->
   <section class="screen" id="screen-kia">
-    <div class="section-title">Заводские параметры Kia Sorento</div>
-    <div class="hint mb8">Расширенные параметры вне стандарта OBD-II, специфичные для этой модели.</div>
+    <div class="section-title">Заводские параметры</div>
+    <div class="hint mb8">Расширенные параметры вне стандарта OBD-II, специфичные для марки/модели — база из 337 моделей.</div>
+    <div class="row mb8">
+      <select id="kia-brand" ></select>
+      <select id="kia-model" ></select>
+    </div>
+    <div class="row mb8">
+      <select id="kia-pack" ></select>
+    </div>
+    <div class="hint mb8">Пакет протокола (второй список) используется вместо марки/модели, если выбран.</div>
     <button class="btn primary mb8" id="btn-read-kia">Считать заводские параметры</button>
     <div id="kia-content">
       <div class="empty-state glass"><div class="icon">🏭</div><div class="title">Нажмите «Считать»</div></div>
@@ -110,6 +118,10 @@
       <button class="btn small danger" id="btn-clear-history">Очистить</button>
     </div>
     <div id="history-list"></div>
+    <div class="row between mt16" style="align-items:center">
+      <div class="hint">Журнал команд/ответов адаптера — для диагностики багов</div>
+      <button class="btn small" id="btn-download-log">Скачать лог</button>
+    </div>
   </section>
 
 </main>

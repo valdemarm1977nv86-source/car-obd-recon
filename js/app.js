@@ -3,7 +3,7 @@ import { PID_LIST, GAUGE_PIDS, CARD_PIDS, byName, decodePidResponse, decodeReadi
 import { describeDtc } from "./dtc-db.js";
 import { saveScan, getHistory, getScan, deleteScan, clearHistory } from "./storage.js";
 import { downloadReport, shareReport } from "./report.js";
-import { KIA_HEADER, KIA_SORENTO_PIDS } from "./kia-pids.js";
+import { getBrands, getModelsForBrand, getPackNames, getProfileGroups, getPackGroups } from "./kia-pids.js";
 
 const $ = (id) => document.getElementById(id);
 const obd = new ObdLink();
@@ -563,23 +563,56 @@ async function readReadiness(pid, btnId, title) {
 $("btn-read-readiness").addEventListener("click", () => readReadiness("01", "btn-read-readiness", "С момента сброса кодов"));
 $("btn-read-readiness-cycle").addEventListener("click", () => readReadiness("41", "btn-read-readiness-cycle", "Текущий цикл движения"));
 
-// ── Заводские параметры Kia Sorento (экспериментально, не Mode 01) ───────
+// ── Заводские параметры (любая марка, экспериментально, не Mode 01) ──────
+// Данные из Car Scanner (см. LESSONS.md, 2026-08-21) — 337 моделей + 73 общих пакета
+// протоколов, все формулы прошли компиляцию (не подобраны на глаз, см. kia-pids.js/formula.js).
+const DEFAULT_MODEL = "Sorento XM 2.4 GDI"; // машина пользователя, см. PROJECT_CONTEXT.md
+
+async function initFactoryPidsUI() {
+  const brandSel = $("kia-brand"), modelSel = $("kia-model"), packSel = $("kia-pack");
+  const brands = await getBrands();
+  brandSel.innerHTML = brands.map((b) => `<option value="${b}">${b}</option>`).join("");
+  const packs = await getPackNames();
+  packSel.innerHTML = `<option value="">— не использовать —</option>` + packs.map((p) => `<option value="${p}">${p}</option>`).join("");
+
+  async function fillModels(brand) {
+    const models = await getModelsForBrand(brand);
+    modelSel.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join("");
+    if (models.includes(DEFAULT_MODEL)) modelSel.value = DEFAULT_MODEL;
+  }
+
+  brandSel.addEventListener("change", () => fillModels(brandSel.value));
+  brandSel.value = "Kia";
+  await fillModels("Kia");
+}
+const factoryPidsReady = initFactoryPidsUI();
+
 $("btn-read-kia").addEventListener("click", async () => {
   if (!state.connected) { toast("Сначала подключитесь к сканеру", "err"); return; }
   $("btn-read-kia").disabled = true;
   const host = $("kia-content");
-  host.innerHTML = `<div class="hint">Переключаюсь на блок управления и считываю…</div>`;
+  host.innerHTML = `<div class="hint">Переключаюсь на блоки управления и считываю…</div>`;
   state.pollPaused = true;
   try {
+    await factoryPidsReady;
+    const packName = $("kia-pack").value;
+    const groups = packName ? await getPackGroups(packName) : await getProfileGroups($("kia-model").value);
     const rows = [];
-    for (const def of KIA_SORENTO_PIDS) {
+    for (const g of groups) {
+      let bytes = null;
       try {
-        const bytes = await obd.requestCustomPid(KIA_HEADER, def.command);
-        const value = bytes && bytes.length >= def.bytes ? def.decode(...bytes.slice(0, def.bytes)) : null;
-        rows.push({ label: def.label, unit: def.unit, value: value != null ? Math.round(value * 10) / 10 : null });
-      } catch { /* пропуск параметра */ }
+        bytes = g.before
+          ? await obd.requestWithSequence(g.before, g.command)
+          : await obd.requestCustomPid(g.header, g.command);
+        if (g.after) await obd.runCommandSequence(g.after);
+      } catch { /* пропуск группы — машина не ответила на этот блок управления */ }
+      for (const f of g.fields) {
+        let value = null;
+        if (bytes) { try { value = f.decode(bytes); } catch { value = null; } }
+        rows.push({ label: f.label, unit: f.unit, value: value != null ? Math.round(value * 100) / 100 : null });
+      }
     }
-    host.innerHTML = `
+    host.innerHTML = groups.length ? `
       <div class="hint mb8">⚠ Экспериментально: формулы извлечены из стороннего приложения, не проверены живым тестом. Единицы измерения предположительные.</div>
       <div class="metric-grid">
         ${rows.map(r => `
@@ -587,7 +620,7 @@ $("btn-read-kia").addEventListener("click", async () => {
             <div class="m-label">${r.label}</div>
             <div class="m-value ${r.value == null ? "dash" : ""}">${r.value != null ? r.value : "—"} <span class="unit">${r.unit}</span></div>
           </div>`).join("")}
-      </div>`;
+      </div>` : `<div class="hint">Для этой модели нет параметров в базе</div>`;
   } catch (e) {
     host.innerHTML = `<div class="hint" style="color:#fca5a5">${e.message || "Ошибка чтения"}</div>`;
   } finally {
@@ -643,6 +676,20 @@ $("btn-clear-history").addEventListener("click", async () => {
   if (!ok) return;
   clearHistory();
   renderHistory();
+});
+
+// ── Лог команд/ответов адаптера (для диагностики багов, не гадая) ──────────
+$("btn-download-log").addEventListener("click", () => {
+  const text = obd.getLogText() || "Лог пуст — команды ещё не отправлялись.";
+  const blob = new Blob([text], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `obd-log-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 });
 
 // ── Инициализация ────────────────────────────────────────────────────────

@@ -334,8 +334,15 @@ const PREFIX_FALLBACK = {
   U1: "Неисправность сети (производитель)",
 };
 
+// Расширенная база (5204 кода, английские описания) — извлечена из Car Scanner (см.
+// LESSONS.md, 2026-08-21), используется только как запасной вариант для кодов, которых нет
+// в основной русской базе выше. Грузится в фоне; пока не загрузилась — просто не участвует.
+let extraDtc = null;
+fetch("data/dtc-full.json").then((r) => r.json()).then((d) => { extraDtc = d; }).catch(() => { extraDtc = {}; });
+
 export function describeDtc(code) {
   if (DTC_DESC[code]) return DTC_DESC[code];
+  if (extraDtc && extraDtc[code]) return extraDtc[code] + " (англ., доп. база)";
   const prefix = code.slice(0, 2).toUpperCase();
   return PREFIX_FALLBACK[prefix] || `Неизвестный код ${code}`;
 }

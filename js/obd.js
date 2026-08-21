@@ -18,6 +18,19 @@ export class ObdLink {
     this._queue = Promise.resolve();
     this.onDisconnect = null;
     this.deviceName = "";
+    this.log = []; // { ts, cmd, resp|error } — для диагностики багов без гадания, см. app.js downloadLog()
+  }
+
+  _logEntry(cmd, respOrError) {
+    this.log.push({ ts: Date.now(), cmd, ...(respOrError instanceof Error ? { error: respOrError.message } : { resp: respOrError }) });
+    if (this.log.length > 500) this.log.shift();
+  }
+
+  getLogText() {
+    return this.log.map((e) => {
+      const t = new Date(e.ts).toLocaleTimeString("ru-RU");
+      return `[${t}] → ${e.cmd}\n${e.error ? "  ! ошибка: " + e.error : "  ← " + JSON.stringify(e.resp)}`;
+    }).join("\n");
   }
 
   async connect() {
@@ -103,8 +116,14 @@ export class ObdLink {
       });
     }).then((raw) => cleanResponse(raw, cmd));
 
-    // Сериализация: следующая команда стартует только после завершения предыдущей.
-    this._queue = this._queue.then(run, run);
+    const runLogged = () => run().then(
+      (resp) => { this._logEntry(cmd, resp); return resp; },
+      (err) => { this._logEntry(cmd, err); throw err; }
+    );
+    // Сериализация: следующая команда стартует только после завершения предыдущей
+    // (run/runLogged передаётся как callback, а не вызывается сразу — иначе команды
+    // пойдут параллельно и сломают сопоставление ответов через this._pending).
+    this._queue = this._queue.then(runLogged, runLogged);
     return this._queue;
   }
 
@@ -123,9 +142,32 @@ export class ObdLink {
     return parsePidBytes(resp, command.slice(0, 2), command.slice(2, 4));
   }
 
+  // Некоторые параметры из базы Car Scanner требуют собственной инициализирующей
+  // последовательности команд (например, свою настройку flow control) вместо простого ATSH.
+  // sequence — команды через ";", как хранится в исходных данных (поле BCM/ACM).
+  async runCommandSequence(sequence) {
+    for (const cmd of sequence.split(";").map((s) => s.trim()).filter(Boolean)) {
+      try { await this.sendCommand(cmd); } catch { /* пропускаем сбойную команду инициализации */ }
+    }
+  }
+
+  // Как requestCustomPid, но с произвольной before-последовательностью вместо простого ATSH
+  // (используется, когда before уже сам содержит нужный ATSH/ATFC).
+  async requestWithSequence(before, command) {
+    await this.runCommandSequence(before);
+    const resp = await this.sendCommand(command);
+    return parsePidBytes(resp, command.slice(0, 2), command.slice(2, 4));
+  }
+
   // Возвращает адаптер к автоматическому выбору заголовка после заводских запросов.
+  // Баг, найденный живым тестом 2026-08-21: ATSP0 сбрасывает только протокол, а заголовок,
+  // выставленный через ATSH (requestCustomPid/requestWithSequence), остаётся — из-за этого
+  // после визита в "Заводские параметры" обычные PID на дашборде переставали отвечать, хотя
+  // соединение оставалось активным. ATSH7DF — стандартный функциональный адрес запроса
+  // OBD-II по CAN (ISO 15765-4, 11-бит), тот же, что используется по умолчанию без ATSH.
   async restoreAutoHeader() {
     await this.sendCommand("ATSP0");
+    await this.sendCommand("ATSH7DF");
   }
 
   // Версия чипа (ATI) и его собственное напряжение питания (ATRV) — не от машины, от адаптера.
