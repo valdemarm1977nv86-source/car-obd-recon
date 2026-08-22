@@ -468,6 +468,19 @@ async function startPolling() {
   state.pollActive = false;
 }
 
+// ── Разбор многострочного ответа адаптера ───────────────────────────────
+// Живой тест 2026-08-22 показал, что этот KW901 иногда возвращает ответ на одну команду
+// несколькими строками сразу (например "413003\n413003" — дублирующее эхо), хотя ATL0/ATS0
+// в норме должны это подавлять. Наивная склейка resp.replace(/\s+/g,"") стирает переносы строк
+// и сливает строки в одну сплошную hex-строку — это сдвигает границы байт у всего, что идёт
+// после первой лишней строки, и производит "фантомные" DTC/битые данные (см. LESSONS.md).
+// requestPid()/parsePidBytes() в obd.js уже разбирает по строкам правильно — здесь та же логика
+// для мест, где код сам работает с сырым sendCommand().
+function pickResponseLine(resp, echoPrefix) {
+  const lines = (resp || "").split(/\r?\n/).map((l) => l.replace(/\s+/g, "").toUpperCase()).filter(Boolean);
+  return lines.find((l) => l.startsWith(echoPrefix)) || lines[0] || "";
+}
+
 // ── DTC (подтверждённые Mode 03 / ожидающие Mode 07 / постоянные Mode 0A) ──
 const DTC_MODES = {
   confirmed: { cmd: "03", echo: "43", label: "Подтверждённые", clearable: true },
@@ -505,7 +518,7 @@ async function loadDtc(mode) {
   $("dtc-list").innerHTML = `<div class="hint">Считываю…</div>`;
   try {
     const resp = await obd.sendCommand(modeInfo.cmd);
-    const hex = resp.replace(/\s+/g, "").toUpperCase();
+    const hex = pickResponseLine(resp, modeInfo.echo);
     let codes = [];
     if (!/NO ?DATA|UNABLE|STOPPED|ERROR|\?/i.test(hex)) {
       const bodyIdx = hex.indexOf(modeInfo.echo);
@@ -594,7 +607,7 @@ $("btn-read-mode6").addEventListener("click", async () => {
       const midHex = mid.toString(16).padStart(2, "0").toUpperCase();
       try {
         const resp = await obd.sendCommand("06" + midHex);
-        const hex = resp.replace(/\s+/g, "").toUpperCase();
+        const hex = pickResponseLine(resp, "46" + midHex);
         if (hex && !/NO ?DATA|UNABLE|STOPPED|\?/i.test(hex)) {
           results.push({ mid: "01" + midHex, raw: hex });
         }
@@ -624,7 +637,7 @@ $("btn-read-vin").addEventListener("click", async () => {
   host.innerHTML = `<div class="hint">Считываю…</div>`;
   try {
     const resp = await obd.sendCommand("0902");
-    const hex = resp.replace(/\s+/g, "").toUpperCase();
+    const hex = pickResponseLine(resp, "4902");
     const idx = hex.indexOf("4902");
     let body = idx >= 0 ? hex.slice(idx + 4) : hex;
     if (body.startsWith("01")) body = body.slice(2);
