@@ -14,6 +14,7 @@
   --info: #60a5fa;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --ui-zoom: 1;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -92,8 +93,26 @@ body {
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn.small { padding: 6px 10px; font-size: 12px; }
 
+.icon-btn {
+  border: 1px solid var(--border);
+  background: rgba(30, 41, 59, 0.6);
+  color: var(--text);
+  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all .15s;
+}
+.icon-btn:active { transform: scale(0.92); }
+
 /* ── Контент / экраны ───────────────────────────────────────────────────── */
-main { padding: 14px 14px 24px; max-width: 900px; margin: 0 auto; }
+main { padding: 14px 14px 24px; max-width: 900px; margin: 0 auto; zoom: var(--ui-zoom); }
 .screen { display: none; animation: fadeUp .3s ease; }
 .screen.active { display: block; }
 
@@ -237,6 +256,30 @@ input[type=text], select, textarea {
 textarea { font-family: monospace; font-size: 11px; resize: vertical; }
 label.field-label { font-size: 11px; color: var(--dim); display: block; margin-bottom: 5px; }
 
+/* ── Поле-кнопка выбора (марка/модель/пакет) ────────────────────────────── */
+.picker-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #0b1120;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.picker-field:active { transform: scale(0.98); }
+.picker-field .pf-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow: hidden; }
+.picker-field .pf-label { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+.picker-field .pf-value { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-field .pf-chev { color: var(--dim); flex: none; }
+
 /* ── Модалка / диалог подтверждения ─────────────────────────────────────── */
 .modal-overlay {
   position: fixed; inset: 0; z-index: 50;
@@ -253,6 +296,84 @@ label.field-label { font-size: 11px; color: var(--dim); display: block; margin-b
 .modal-box h3 { font-size: 15px; margin-bottom: 8px; }
 .modal-box p { font-size: 13px; color: var(--dim2); line-height: 1.5; margin-bottom: 16px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ── Список выбора снизу / панель настроек (bottom sheet) ───────────────── */
+.picker-overlay {
+  position: fixed; inset: 0; z-index: 55;
+  background: rgba(0, 0, 0, .6);
+  display: flex; align-items: flex-end; justify-content: center;
+  padding: 0;
+}
+.picker-overlay[hidden] { display: none; }
+.picker-sheet {
+  width: 100%;
+  max-width: 480px;
+  max-height: 75vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px 20px 0 0;
+  padding: 14px 14px calc(14px + var(--safe-bottom));
+  animation: sheetUp .22s ease;
+}
+@keyframes sheetUp { from { transform: translateY(24px); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
+.picker-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.picker-title { font-weight: 700; font-size: 15px; }
+.picker-search { margin-bottom: 10px; }
+.picker-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.picker-item {
+  text-align: left;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.picker-item:active { background: rgba(148, 163, 184, 0.12); }
+.picker-item.selected { background: rgba(34, 211, 238, 0.12); color: var(--accent); font-weight: 700; }
+
+/* ── Настройки: строки/степпер/переключатель ─────────────────────────────── */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-label { font-size: 13px; color: var(--text); }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper-value { font-size: 13px; font-weight: 700; min-width: 40px; text-align: center; }
+#brightness-range { width: 130px; accent-color: var(--accent); }
+
+.switch { position: relative; display: inline-block; width: 42px; height: 24px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch-track {
+  position: absolute; inset: 0; cursor: pointer;
+  background: rgba(100, 116, 139, .35);
+  border-radius: 999px;
+  transition: background .15s;
+}
+.switch-track::before {
+  content: ""; position: absolute; left: 3px; top: 3px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #e2e8f0;
+  transition: transform .15s;
+}
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track::before { transform: translateX(18px); background: #001318; }
+
+/* ── Оверлей яркости экрана ───────────────────────────────────────────────── */
+#brightness-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s;
+}
 
 /* ── Тосты ───────────────────────────────────────────────────────────────── */
 #toast-host {
@@ -292,3 +413,31 @@ a.link { color: var(--accent); text-decoration: none; }
   .navbar { position: sticky; bottom: 0; }
   body { padding-bottom: 24px; }
 }
+
+/* ── Светлая тема ──────────────────────────────────────────────────────────
+   Переключается через html[data-theme], см. js/app.js (initTheme). Все цвета,
+   объявленные через var(--...), подхватываются автоматически — здесь только
+   переопределение переменных и тех мест, где цвет был захардкожен в тёмный. */
+html[data-theme="light"] {
+  --bg: #eef2f7;
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-solid: #ffffff;
+  --border: rgba(15, 23, 42, 0.10);
+  --text: #0f172a;
+  --dim: #64748b;
+  --dim2: #475569;
+}
+html[data-theme="light"] body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(8, 145, 178, 0.07), transparent),
+    linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+}
+html[data-theme="light"] .topbar { background: rgba(238, 242, 247, 0.88); }
+html[data-theme="light"] .navbar { background: rgba(238, 242, 247, 0.92); }
+html[data-theme="light"] .btn,
+html[data-theme="light"] .icon-btn { background: rgba(226, 232, 240, 0.9); }
+html[data-theme="light"] input[type=text],
+html[data-theme="light"] select,
+html[data-theme="light"] textarea,
+html[data-theme="light"] .picker-field { background: #ffffff; }

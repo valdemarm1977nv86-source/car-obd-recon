@@ -4,9 +4,15 @@ import { describeDtc } from "./dtc-db.js";
 import { saveScan, getHistory, getScan, deleteScan, clearHistory } from "./storage.js";
 import { downloadReport, shareReport } from "./report.js";
 import { getBrands, getModelsForBrand, getPackNames, getProfileGroups, getPackGroups } from "./kia-pids.js";
+import { logEvent, getAppLogText } from "./applog.js";
 
 const $ = (id) => document.getElementById(id);
 const obd = new ObdLink();
+
+// ── Постоянный журнал приложения (переживает закрытие/краш, см. applog.js) ──
+logEvent("app-start", navigator.userAgent);
+window.addEventListener("error", (e) => logEvent("js-error", `${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener("unhandledrejection", (e) => logEvent("promise-error", (e.reason && e.reason.message) || String(e.reason)));
 
 const state = {
   connected: false,
@@ -34,6 +40,101 @@ function toast(msg, kind = "") {
   setTimeout(() => el.remove(), 4200);
 }
 
+// ── Тема (светлая/тёмная) ────────────────────────────────────────────────
+const THEME_KEY = "obd-theme";
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $("btn-theme").textContent = theme === "light" ? "🌙" : "☀️";
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "light" ? "#eef2f7" : "#070b14");
+}
+function initTheme() {
+  applyTheme(localStorage.getItem(THEME_KEY) || "dark");
+  $("btn-theme").addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+  });
+}
+initTheme();
+
+// ── Настройки: масштаб / яркость / не гасить экран ───────────────────────
+const SCALE_KEY = "obd-ui-scale", BRIGHTNESS_KEY = "obd-ui-brightness", WAKELOCK_KEY = "obd-wakelock";
+let wakeLock = null;
+
+function applyScale(scale) {
+  document.documentElement.style.setProperty("--ui-zoom", scale);
+  $("scale-value").textContent = Math.round(scale * 100) + "%";
+}
+function applyBrightness(pct) {
+  $("brightness-overlay").style.opacity = String(Math.max(0, (100 - pct) / 100 * 0.65));
+}
+async function setWakeLock(on) {
+  try {
+    if (on && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch { /* API недоступен (не Chrome/Android) или вкладка не видна — не критично */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && localStorage.getItem(WAKELOCK_KEY) === "1") setWakeLock(true);
+});
+
+function initSettings() {
+  let scale = parseFloat(localStorage.getItem(SCALE_KEY)) || 1;
+  applyScale(scale);
+  let brightness = parseInt(localStorage.getItem(BRIGHTNESS_KEY), 10);
+  if (!Number.isFinite(brightness)) brightness = 100;
+  $("brightness-range").value = brightness;
+  applyBrightness(brightness);
+  const wakeOn = localStorage.getItem(WAKELOCK_KEY) === "1";
+  $("wakelock-toggle").checked = wakeOn;
+  if (wakeOn) setWakeLock(true);
+
+  $("btn-settings").addEventListener("click", () => { $("settings-overlay").hidden = false; });
+  $("settings-close").addEventListener("click", () => { $("settings-overlay").hidden = true; });
+  $("settings-overlay").addEventListener("click", (e) => { if (e.target.id === "settings-overlay") $("settings-overlay").hidden = true; });
+
+  $("scale-down").addEventListener("click", () => {
+    scale = Math.max(0.85, Math.round((scale - 0.05) * 100) / 100);
+    localStorage.setItem(SCALE_KEY, scale);
+    applyScale(scale);
+  });
+  $("scale-up").addEventListener("click", () => {
+    scale = Math.min(1.3, Math.round((scale + 0.05) * 100) / 100);
+    localStorage.setItem(SCALE_KEY, scale);
+    applyScale(scale);
+  });
+
+  $("brightness-range").addEventListener("input", (e) => {
+    const v = parseInt(e.target.value, 10);
+    localStorage.setItem(BRIGHTNESS_KEY, v);
+    applyBrightness(v);
+  });
+
+  $("wakelock-toggle").addEventListener("change", async (e) => {
+    localStorage.setItem(WAKELOCK_KEY, e.target.checked ? "1" : "0");
+    await setWakeLock(e.target.checked);
+  });
+
+  $("btn-reset-cache").addEventListener("click", async () => {
+    const ok = await confirmModal("Сбросить кэш приложения?", "Приложение перезагрузится и заново скачает файлы. История сканирований не удаляется.");
+    if (!ok) return;
+    try {
+      const names = await caches.keys();
+      await Promise.all(names.map((n) => caches.delete(n)));
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    } catch { /* сервис-воркер недоступен — просто перезагрузим */ }
+    location.reload();
+  });
+}
+initSettings();
+
 // ── Модалка подтверждения ────────────────────────────────────────────────
 function confirmModal(title, text) {
   return new Promise((resolve) => {
@@ -50,6 +151,53 @@ function confirmModal(title, text) {
     }
     $("modal-yes").addEventListener("click", onYes);
     $("modal-no").addEventListener("click", onNo);
+  });
+}
+
+// ── Список выбора снизу (bottom sheet) — марка/модель/пакет ──────────────
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function openPicker(title, items, currentValue) {
+  return new Promise((resolve) => {
+    const overlay = $("picker-overlay");
+    const list = $("picker-list");
+    const search = $("picker-search");
+    $("picker-title").textContent = title;
+    search.value = "";
+
+    function render(filter) {
+      const q = (filter || "").trim().toLowerCase();
+      const shown = q ? items.filter((it) => it.toLowerCase().includes(q)) : items;
+      list.innerHTML = shown.length
+        ? shown.map((it) => `<button type="button" class="picker-item${it === currentValue ? " selected" : ""}" data-value="${escapeHtml(it)}">${escapeHtml(it)}</button>`).join("")
+        : `<div class="hint" style="padding:16px;text-align:center">Ничего не найдено</div>`;
+    }
+    render("");
+
+    function onInput() { render(search.value); }
+    function onListClick(e) {
+      const btn = e.target.closest(".picker-item");
+      if (!btn) return;
+      cleanup();
+      resolve(btn.dataset.value);
+    }
+    function onClose() { cleanup(); resolve(null); }
+    function onOverlayClick(e) { if (e.target === overlay) onClose(); }
+    function cleanup() {
+      overlay.hidden = true;
+      search.removeEventListener("input", onInput);
+      list.removeEventListener("click", onListClick);
+      $("picker-close").removeEventListener("click", onClose);
+      overlay.removeEventListener("click", onOverlayClick);
+    }
+
+    search.addEventListener("input", onInput);
+    list.addEventListener("click", onListClick);
+    $("picker-close").addEventListener("click", onClose);
+    overlay.addEventListener("click", onOverlayClick);
+    overlay.hidden = false;
+    search.focus();
   });
 }
 
@@ -91,6 +239,7 @@ $("btn-connect").addEventListener("click", async () => {
     state.connected = true;
     setConnUi("connected");
     toast(`Подключено: ${name}`, "ok");
+    logEvent("ble-connect", name);
     buildDashboard();
     startPolling();
 
@@ -106,11 +255,13 @@ $("btn-connect").addEventListener("click", async () => {
   } catch (e) {
     setConnUi("idle");
     toast(e.message || "Не удалось подключиться", "err");
+    logEvent("ble-connect-error", e.message || String(e));
   }
 });
 
 $("btn-disconnect").addEventListener("click", () => {
   obd.disconnect();
+  logEvent("ble-disconnect-manual");
 });
 
 obd.onDisconnect = () => {
@@ -118,6 +269,7 @@ obd.onDisconnect = () => {
   state.pollActive = false;
   setConnUi("idle");
   toast("Соединение потеряно", "err");
+  logEvent("ble-disconnect-lost");
 };
 
 // ── Дуговой SVG-датчик ────────────────────────────────────────────────────
@@ -575,15 +727,45 @@ async function initFactoryPidsUI() {
   const packs = await getPackNames();
   packSel.innerHTML = `<option value="">— не использовать —</option>` + packs.map((p) => `<option value="${p}">${p}</option>`).join("");
 
+  function syncFactoryFieldLabels() {
+    $("kia-brand-value").textContent = brandSel.value || "—";
+    $("kia-model-value").textContent = modelSel.value || "—";
+    $("kia-pack-value").textContent = packSel.value ? packSel.options[packSel.selectedIndex].textContent : "— не использовать —";
+  }
+
   async function fillModels(brand) {
     const models = await getModelsForBrand(brand);
     modelSel.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join("");
     if (models.includes(DEFAULT_MODEL)) modelSel.value = DEFAULT_MODEL;
+    syncFactoryFieldLabels();
   }
 
   brandSel.addEventListener("change", () => fillModels(brandSel.value));
   brandSel.value = "Kia";
   await fillModels("Kia");
+  syncFactoryFieldLabels();
+
+  $("kia-brand-field").addEventListener("click", async () => {
+    const choice = await openPicker("Марка", brands, brandSel.value);
+    if (choice == null || choice === brandSel.value) return;
+    brandSel.value = choice;
+    await fillModels(choice);
+  });
+  $("kia-model-field").addEventListener("click", async () => {
+    const models = Array.from(modelSel.options).map((o) => o.value);
+    const choice = await openPicker("Модель", models, modelSel.value);
+    if (choice == null) return;
+    modelSel.value = choice;
+    syncFactoryFieldLabels();
+  });
+  $("kia-pack-field").addEventListener("click", async () => {
+    const items = ["— не использовать —", ...packs];
+    const current = packSel.value ? packSel.options[packSel.selectedIndex].textContent : "— не использовать —";
+    const choice = await openPicker("Пакет протокола", items, current);
+    if (choice == null) return;
+    packSel.value = choice === "— не использовать —" ? "" : choice;
+    syncFactoryFieldLabels();
+  });
 }
 const factoryPidsReady = initFactoryPidsUI();
 
@@ -678,9 +860,11 @@ $("btn-clear-history").addEventListener("click", async () => {
   renderHistory();
 });
 
-// ── Лог команд/ответов адаптера (для диагностики багов, не гадая) ──────────
+// ── Лог команд/ответов адаптера + постоянный журнал приложения ─────────────
 $("btn-download-log").addEventListener("click", () => {
-  const text = obd.getLogText() || "Лог пуст — команды ещё не отправлялись.";
+  const cmdLog = obd.getLogText() || "Команд в этой сессии ещё не было.";
+  const text = "── Журнал приложения (все запуски) ──\n" + getAppLogText()
+    + "\n\n── Команды/ответы адаптера (текущая сессия) ──\n" + cmdLog;
   const blob = new Blob([text], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

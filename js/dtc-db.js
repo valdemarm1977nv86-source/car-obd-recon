@@ -340,9 +340,28 @@ const PREFIX_FALLBACK = {
 let extraDtc = null;
 fetch("data/dtc-full.json").then((r) => r.json()).then((d) => { extraDtc = d; }).catch(() => { extraDtc = {}; });
 
+// База DTC по маркам из OBDocker (см. obdocker_extraction/README.md, 2026-08-22) — 42331 код,
+// сгруппировано по марке. Коды P1/B1/C1/U1 у разных производителей означают разное, поэтому
+// подставлять их без учёта марки нельзя — используем только: (1) для марки машины пользователя
+// (Kia) — с приоритетом, до общей английской базы; (2) для остальных марок — только коды из
+// общестандартных SAE-диапазонов (P0/P2/P3/U0/B0/C0), где марка на смысл кода не влияет.
+let obdockerDtc = null;
+fetch("data/dtc-obdocker.json").then((r) => r.json()).then((d) => { obdockerDtc = d; }).catch(() => { obdockerDtc = {}; });
+const USER_CAR_BRAND = "Kia"; // см. DEFAULT_MODEL в app.js
+const GENERIC_DTC_PREFIXES = new Set(["P0", "P2", "P3", "U0", "B0", "C0"]);
+
 export function describeDtc(code) {
   if (DTC_DESC[code]) return DTC_DESC[code];
+  const upperCode = code.toUpperCase();
+  if (obdockerDtc && obdockerDtc[USER_CAR_BRAND] && obdockerDtc[USER_CAR_BRAND][upperCode]) {
+    return obdockerDtc[USER_CAR_BRAND][upperCode] + " (англ., OBDocker/Kia)";
+  }
   if (extraDtc && extraDtc[code]) return extraDtc[code] + " (англ., доп. база)";
   const prefix = code.slice(0, 2).toUpperCase();
+  if (obdockerDtc && GENERIC_DTC_PREFIXES.has(prefix)) {
+    for (const brand in obdockerDtc) {
+      if (obdockerDtc[brand][upperCode]) return obdockerDtc[brand][upperCode] + " (англ., OBDocker)";
+    }
+  }
   return PREFIX_FALLBACK[prefix] || `Неизвестный код ${code}`;
 }

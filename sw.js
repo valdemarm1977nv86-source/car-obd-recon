@@ -4,6 +4,7 @@ const APP_SHELL = [
   "./index.html",
   "./css/app.css",
   "./js/app.js",
+  "./js/applog.js",
   "./js/obd.js",
   "./js/pids.js",
   "./js/kia-pids.js",
