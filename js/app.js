@@ -44,19 +44,29 @@ function toast(msg, kind = "") {
 const THEME_KEY = "obd-theme";
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  $("btn-theme").textContent = theme === "light" ? "🌙" : "☀️";
+  const btnTheme = $("btn-theme");
+  if (btnTheme) btnTheme.textContent = theme === "light" ? "🌙" : "☀️";
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", theme === "light" ? "#eef2f7" : "#070b14");
 }
 function initTheme() {
   applyTheme(localStorage.getItem(THEME_KEY) || "dark");
-  $("btn-theme").addEventListener("click", () => {
-    const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-    localStorage.setItem(THEME_KEY, next);
-    applyTheme(next);
-  });
+  const btnTheme = $("btn-theme");
+  if (btnTheme) {
+    btnTheme.addEventListener("click", () => {
+      const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+      localStorage.setItem(THEME_KEY, next);
+      applyTheme(next);
+    });
+  }
 }
-initTheme();
+
+// Инициализировать после загрузки DOM
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initTheme);
+} else {
+  initTheme();
+}
 
 // ── Настройки: масштаб / яркость / не гасить экран ───────────────────────
 const SCALE_KEY = "obd-ui-scale", BRIGHTNESS_KEY = "obd-ui-brightness", WAKELOCK_KEY = "obd-wakelock";
@@ -510,27 +520,58 @@ function renderDtcList(codes) {
     `).join("")}`;
 }
 
+// Доп. адреса блоков управления Kia/Hyundai для чтения DTC — стандартный запрос Mode
+// 03/07/0A без адресации идёт только к штатному ЭБУ двигателя (7E0) и не видит кузовные/
+// SRS-коды (например, реальный B1809 — неисправность защиты пешеходов). Источник списка —
+// декомпилированный код Car Scanner (класс `aq`, ветка Kia/Hyundai для CAN 11-bit,
+// см. LESSONS.md/DEVELOPMENT_LOG за 2026-09-05): в этой логике Car Scanner НЕТ проверки
+// Pro/подписки — единственная платная опция там отдельно, только отключение рекламы.
+const KIA_HYUNDAI_EXTRA_DTC_HEADERS = ["7E1", "7A5", "7B3", "7C6", "7D1", "7D2", "7E5", "740"];
+
+// Читает коды одного режима (Mode 03/07/0A) с уже выставленным заголовком (ATSH) —
+// используется и для штатного ЭБУ (без ATSH), и для перебора доп. адресов.
+async function readDtcCodes(modeInfo) {
+  const resp = await obd.sendCommand(modeInfo.cmd);
+  const hex = pickResponseLine(resp, modeInfo.echo);
+  if (/NO ?DATA|UNABLE|STOPPED|ERROR|\?/i.test(hex)) return [];
+  const bodyIdx = hex.indexOf(modeInfo.echo);
+  const body = bodyIdx >= 0 ? hex.slice(bodyIdx + modeInfo.echo.length) : hex;
+  const bytes = [];
+  for (let i = 0; i + 1 < body.length; i += 2) {
+    const b = parseInt(body.slice(i, i + 2), 16);
+    if (Number.isNaN(b)) break;
+    bytes.push(b);
+  }
+  return parseDtcBytes(bytes);
+}
+
 async function loadDtc(mode) {
   if (!state.connected) { toast("Сначала подключитесь к сканеру", "err"); return; }
   dtcMode = mode;
   document.querySelectorAll(".dtc-mode-btn").forEach(b => b.classList.toggle("primary", b.dataset.dtcMode === mode));
   const modeInfo = DTC_MODES[mode];
-  $("dtc-list").innerHTML = `<div class="hint">Считываю…</div>`;
+  $("dtc-list").innerHTML = `<div class="hint">Считываю (двигатель)…</div>`;
   try {
-    const resp = await obd.sendCommand(modeInfo.cmd);
-    const hex = pickResponseLine(resp, modeInfo.echo);
-    let codes = [];
-    if (!/NO ?DATA|UNABLE|STOPPED|ERROR|\?/i.test(hex)) {
-      const bodyIdx = hex.indexOf(modeInfo.echo);
-      const body = bodyIdx >= 0 ? hex.slice(bodyIdx + modeInfo.echo.length) : hex;
-      const bytes = [];
-      for (let i = 0; i + 1 < body.length; i += 2) {
-        const b = parseInt(body.slice(i, i + 2), 16);
-        if (Number.isNaN(b)) break;
-        bytes.push(b);
+    const seen = new Set();
+    let allCodes = await readDtcCodes(modeInfo);
+    allCodes.forEach(c => seen.add(c));
+
+    // Доп. блоки (кузов/SRS/АКПП и т.д.) — только для Kia/Hyundai, только на "подтверждённые"
+    // и "ожидающие" (сброс DTC отдельного блока без явного запроса пользователя не делаем).
+    if (mode !== "permanent") {
+      for (let i = 0; i < KIA_HYUNDAI_EXTRA_DTC_HEADERS.length; i++) {
+        const header = KIA_HYUNDAI_EXTRA_DTC_HEADERS[i];
+        $("dtc-list").innerHTML = `<div class="hint">Считываю (блок ${i + 1}/${KIA_HYUNDAI_EXTRA_DTC_HEADERS.length})…</div>`;
+        try {
+          await obd.sendCommand("ATSH" + header);
+          const codes = await readDtcCodes(modeInfo);
+          codes.forEach(c => seen.add(c));
+        } catch { /* блок не ответил — пропускаем, это ожидаемо для части адресов */ }
       }
-      codes = parseDtcBytes(bytes).map(code => ({ code, desc: describeDtc(code) }));
+      await obd.restoreAutoHeader(); // см. LESSONS.md 2026-08-21: без этого дашборд перестаёт отвечать
     }
+
+    const codes = Array.from(seen).map(code => ({ code, desc: describeDtc(code) }));
     if (mode === "confirmed") state.lastDtc = codes;
     renderDtcList(codes);
     toast(`${modeInfo.label}: ${codes.length}`, codes.length ? "" : "ok");

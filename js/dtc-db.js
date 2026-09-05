@@ -350,9 +350,21 @@ fetch("data/dtc-obdocker.json").then((r) => r.json()).then((d) => { obdockerDtc 
 const USER_CAR_BRAND = "Kia"; // см. DEFAULT_MODEL в app.js
 const GENERIC_DTC_PREFIXES = new Set(["P0", "P2", "P3", "U0", "B0", "C0"]);
 
+// Универсальные коды P0xxx/P2xxx с русским переводом, извлечены из inCarDoc (см.
+// obd_apps_extraction/, 2026-08-23) — точнее и с русским текстом в отличие от английских
+// запасных баз ниже. "Generic" в источнике = код одинаков для всех марок, безопасно для любой
+// машины. Приоритет сразу после ручной базы DTC_DESC, до марко-специфичных источников.
+let incardocGeneric = null;
+fetch("data/dtc-incardoc-generic.json").then((r) => r.json()).then((d) => { incardocGeneric = d; }).catch(() => { incardocGeneric = {}; });
+
 export function describeDtc(code) {
   if (DTC_DESC[code]) return DTC_DESC[code];
   const upperCode = code.toUpperCase();
+  if (incardocGeneric && incardocGeneric[upperCode]) {
+    const entry = incardocGeneric[upperCode];
+    if (entry.ru) return entry.ru;
+    if (entry.en) return entry.en + " (англ., inCarDoc)";
+  }
   if (obdockerDtc && obdockerDtc[USER_CAR_BRAND] && obdockerDtc[USER_CAR_BRAND][upperCode]) {
     return obdockerDtc[USER_CAR_BRAND][upperCode] + " (англ., OBDocker/Kia)";
   }
